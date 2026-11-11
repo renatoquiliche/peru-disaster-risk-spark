@@ -1,0 +1,10 @@
+# The core pipeline uses Spark MLlib (pyspark.ml), which is BUILT INTO the Databricks
+# runtime — you do not need to install anything to run databricks_distributed_pipeline.ipynb.
+#
+# The packages below are OPTIONAL, only for the appendix alternatives in the notebook:
+
+xgboost            # for the SparkXGBClassifier drop-in (needs a classic cluster, not serverless)
+optuna             # if you want Bayesian hyperparameter search driving Spark .fit() calls
+
+# For running the ORIGINAL single-node version outside Databricks, you would instead need:
+#   numpy pandas scikit-learn xgboost scikit-optimize imbalanced-learn shap

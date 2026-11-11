@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use this software or data, please cite the associated paper."
+title: "Identifying final demand points for aid in the aftermath of sudden-onset climate-related disasters in Peru: A supervised learning approach"
+authors:
+  - family-names: Quiliche
+    given-names: Renato
+    affiliation: "Pontifical Catholic University of Rio de Janeiro (PUC-Rio)"
+  - family-names: Maçaira
+    given-names: Paula
+    affiliation: "Pontifical Catholic University of Rio de Janeiro (PUC-Rio)"
+  - family-names: Araujo Baião
+    given-names: Fernanda
+    affiliation: "Pontifical Catholic University of Rio de Janeiro (PUC-Rio)"
+  - family-names: Leiras
+    given-names: Adriana
+    affiliation: "Pontifical Catholic University of Rio de Janeiro (PUC-Rio)"
+preferred-citation:
+  type: article
+  title: "Identifying final demand points for aid in the aftermath of sudden-onset climate-related disasters in Peru: A supervised learning approach"
+  authors:
+    - family-names: Quiliche
+      given-names: Renato
+    - family-names: Maçaira
+      given-names: Paula
+    - family-names: Araujo Baião
+      given-names: Fernanda
+    - family-names: Leiras
+      given-names: Adriana
+  journal: "International Journal of Disaster Risk Reduction"
+  volume: 127
+  start: 105593
+  year: 2025
+  doi: "10.1016/j.ijdrr.2025.105593"
