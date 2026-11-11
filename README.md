@@ -21,31 +21,67 @@ dashed line were done in the original study; this repo starts from the train/tes
 
 ```mermaid
 flowchart TD
-    A["ENAHO household surveys<br/>2018, 2019, 2020, 2021<br/>one row per household-year"]
-    B["Flood and landslide risk maps<br/>sources listed in the paper"]
-    C{"Spatial join<br/>household location x risk areas"}
-    D["Label = 1<br/>household suffered a disaster<br/>AND lies in a mapped risk area"]
-    E["Label = 0<br/>all other households"]
-    F["Modeling table<br/>101,115 household-years<br/>112 features + 4 ID columns<br/>labels: flood_risk, landslide_risk"]
+    A["ENAHO national household survey, INEI<br/>2018, 2019, 2020, 2021<br/>stratified random sample, urban and rural"]
+    A1["Household coordinates"]
+    A2["Self-report: house affected by a<br/>natural disaster in the last 12 months<br/>(disaster type NOT recorded)"]
+    A3["112 vulnerability features<br/>economic, social, health, geographical"]
+
+    B1["MINAM flood-prone urban areas<br/>(incl. tsunamis)"]
+    B2["Dottori et al. 2016<br/>global river flood hazard map"]
+    B3["GFDRR Global Landslide Hazard Map<br/>rainfall-triggered, 1980-2018"]
+    B4["CENEPRED historical records<br/>(verification)"]
+    FZ["Flood hazard zones"]
+    LZ["Landslide hazard zones"]
+
+    C{"Spatial join<br/>household point in hazard zone?"}
+    D["flood_risk = 1<br/>affected AND inside a flood zone"]
+    E["landslide_risk = 1<br/>affected AND inside a landslide zone"]
+    N["0 otherwise"]
+    F["Modeling table<br/>101,115 household-years<br/>112 features + 4 ID columns"]
     G["Train: 2018-2020<br/>72,952 rows"]
-    H["Test: 2021<br/>28,163 rows"]
+    H["Test: 2021 hold-out<br/>28,163 rows"]
     I["Spark MLlib pipeline in this repo<br/>assemble, scale, weight, GBT, tune, evaluate"]
 
-    A --> C
-    B --> C
+    A --> A1
+    A --> A2
+    A --> A3
+    B1 --> FZ
+    B2 --> FZ
+    B3 --> LZ
+    B4 -.-> LZ
+    A1 --> C
+    FZ --> C
+    LZ --> C
+    A2 --> D
+    A2 --> E
     C --> D
     C --> E
+    C --> N
     D --> F
     E --> F
+    N --> F
+    A3 --> F
     F -->|temporal split| G
     F -->|temporal split| H
     G -.-> I
     H -.-> I
 ```
 
-**Why the classes are imbalanced:** a household is positive only if it both suffered a disaster and
-sits inside a mapped risk area. Exposed households are few relative to the whole survey sample, so
-positives are a small minority:
+**Why the spatial join is needed:** ENAHO asks whether the house was affected by a natural disaster
+in the last 12 months (drought, storm, plague, flood, etc.) but does not record *which* hazard.
+Intersecting each household's coordinates with hazard zones attributes the event to floods or
+landslides.
+
+**Hazard-zone sources**
+- **Floods:** Ministerio del Ambiente (MINAM) flood-prone urban areas, including tsunamis, joined with
+  the global flood hazard map of Dottori et al. (2016) to cover rural river floods.
+- **Landslides:** Global Landslide Hazard Map from the Global Facility for Disaster Reduction and
+  Recovery (GFDRR) — mean annual rainfall-triggered landslide hazard, 1980-2018 — verified against
+  historical data from CENEPRED.
+
+**Why the classes are imbalanced:** a household is positive only if it both reports being affected and
+sits inside a hazard zone. Few households meet both conditions (1.20% for floods and 5.45% for
+landslides over the whole 2018-2021 sample), so positives are a small minority:
 
 | Label | Train positives (2018-2020) | Test positives (2021) |
 |---|---|---|
