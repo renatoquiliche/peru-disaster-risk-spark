@@ -14,6 +14,47 @@ serverless**) using the native Spark ML stack.
 
 ---
 
+## Where the data comes from (ETL)
+
+The CSVs in this repo are the **end** of an ETL pipeline described in the paper. The steps above the
+dashed line were done in the original study; this repo starts from the train/test matrices.
+
+```mermaid
+flowchart TD
+    A["ENAHO household surveys<br/>2018, 2019, 2020, 2021<br/>one row per household-year"]
+    B["Flood and landslide risk maps<br/>sources listed in the paper"]
+    C{"Spatial join<br/>household location x risk areas"}
+    D["Label = 1<br/>household suffered a disaster<br/>AND lies in a mapped risk area"]
+    E["Label = 0<br/>all other households"]
+    F["Modeling table<br/>101,115 household-years<br/>112 features + 4 ID columns<br/>labels: flood_risk, landslide_risk"]
+    G["Train: 2018-2020<br/>72,952 rows"]
+    H["Test: 2021<br/>28,163 rows"]
+    I["Spark MLlib pipeline in this repo<br/>assemble, scale, weight, GBT, tune, evaluate"]
+
+    A --> C
+    B --> C
+    C --> D
+    C --> E
+    D --> F
+    E --> F
+    F -->|temporal split| G
+    F -->|temporal split| H
+    G -.-> I
+    H -.-> I
+```
+
+**Why the classes are imbalanced:** a household is positive only if it both suffered a disaster and
+sits inside a mapped risk area. Exposed households are few relative to the whole survey sample, so
+positives are a small minority:
+
+| Label | Train positives (2018-2020) | Test positives (2021) |
+|---|---|---|
+| `flood_risk` | 1,020 of 72,952 (1.4%) | 198 of 28,163 (0.7%) |
+| `landslide_risk` | 3,931 of 72,952 (5.4%) | 1,581 of 28,163 (5.6%) |
+
+This is why the pipeline uses cost-sensitive weights (`n_neg / n_pos`) and imbalance-aware metrics
+(GIBA, G-Mean, MCC) instead of plain accuracy.
+
 ## What's here
 
 ```
