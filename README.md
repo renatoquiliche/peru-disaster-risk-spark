@@ -124,12 +124,45 @@ peru-disaster-risk-spark/
 only grid/random search (`CrossValidator`, `TrainValidationSplit`). A single-node sklearn tuner cannot
 drive a distributed Spark estimator, so the search had to move to the cluster-native one.
 
+## Results from the Databricks run
+
+The committed notebook includes the outputs of a full run on **Databricks Free Edition (serverless)**
+for `LABEL = "flood_risk"`. Grid search over 4 combinations selected `maxDepth = 4`, `maxIter = 60`.
+Metrics on the 2021 hold-out test set (28,163 households, 198 positives):
+
+| Metric | Value |
+|---|---|
+| AUC | 0.8145 |
+| Sensitivity (recall) | 0.6717 |
+| Specificity | 0.8312 |
+| Balanced accuracy | 0.7515 |
+| G-Mean | 0.7472 |
+| GIBA (α = 0.9) | 0.6400 |
+| MCC | 0.1113 |
+| Precision | 0.0274 |
+| F1 | 0.0527 |
+
+Confusion matrix: TP = 133, FN = 65, FP = 4,720, TN = 23,245.
+
+**Reading these numbers:** the model is tuned to avoid false negatives (unmet demand), so it finds
+about two thirds of the affected households at the cost of many false alarms. With only 0.7% positives
+in the test year, precision is low even at 83% specificity. The top features by importance are
+`altitude` (0.32) and per-capita expenditure `gpc` (0.12).
+
+Landslides have not been run yet in the committed notebook — set `LABEL = "landslide_risk"` and re-run.
+
+**A note on scale:** the data is about 50 MB, so Spark gives no speed advantage here over single-node
+sklearn. The point of this repo is the port to a distributed framework and the platform constraints
+it surfaces, not a scale-out speedup.
+
 ## Run it on Databricks
 
 1. **Import the notebook** — Workspace → ⋮ → **Import → File** → `databricks_distributed_pipeline.ipynb`.
 2. **Upload the data to a Volume** — Catalog → your catalog/schema → **Create → Volume** (e.g. `thesis_data`),
    then upload the 8 CSVs from `Databases/TrainTestSplit/` into
    `/Volumes/<catalog>/<schema>/thesis_data/Databases/TrainTestSplit/`.
+   Alternatively, upload the CSVs to a Workspace folder and let the notebook's first code cell create
+   the Volume and copy them in — edit `SRC` in that cell to your own folder.
 3. **Set `CATALOG` / `SCHEMA` / `VOLUME`** in the notebook's cell 0 (defaults: `workspace` / `default` /
    `thesis_data`). Pick floods or landslides with `LABEL`.
 4. **Run top to bottom** on Serverless.
