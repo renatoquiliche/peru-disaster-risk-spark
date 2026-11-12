@@ -118,23 +118,30 @@ peru-disaster-risk-spark/
 | feature matrix `X` | `VectorAssembler` → one `features` vector |
 | `scale_pos_weight` | per-row `weightCol` (cost-sensitive learning) |
 | `XGBClassifier` | `GBTClassifier` (distributed gradient boosting) |
-| `BayesSearchCV` (skopt) | `TrainValidationSplit` + `ParamGridBuilder` (grid search) |
+| `BayesSearchCV` (skopt), maximizing GIBA | explicit grid-search loop, maximizing the same GIBA |
 | GIBA / G-Mean / specificity | confusion matrix via Spark `groupBy` |
 | SHAP | `.featureImportances` + Spark partial-dependence |
 | `pickle.dump` | `model.write().save(...)` |
 
 **Why the tuner changed:** PySpark has no Bayesian hyperparameter search — `pyspark.ml.tuning` provides
-only grid search (`CrossValidator`, `TrainValidationSplit`). A single-node sklearn tuner cannot
-drive a distributed Spark estimator, so the search had to move to the cluster-native one.
+only grid search (`CrossValidator`, `TrainValidationSplit`), and its built-in evaluators cannot score
+the paper's objective. The notebook therefore runs its own grid loop and scores each candidate with
+the same distributed confusion matrix used for the final evaluation.
 
 **What the search is, exactly:** a **grid search** over 4 combinations (`maxDepth` ∈ {4, 6} ×
-`maxIter` ∈ {40, 60}), scored by ROC-AUC on **one random 80/20 train/validation split**. It is not
-random search and not cross-validation; k-fold CV overflows the serverless model cache.
+`maxIter` ∈ {40, 60}), scored by **GIBA on one random 80/20 train/validation split**. It is not
+random search and not cross-validation; k-fold CV is too heavy for Free Edition's serverless compute.
+
+**The tuning objective (same for all three models):** the paper maximizes GIBA, coded as
+`make_index_balanced_accuracy(alpha=0.9, squared=True)(geometric_mean_score)` from `imbalanced-learn`.
+With that call the dominance term is zero, because the G-Mean scorer macro-averages sensitivity and
+specificity, so the score equals **G-Mean squared = sensitivity × specificity**. Both notebooks tune
+on exactly this quantity at the 0.5 threshold.
 
 ## AutoML comparison
 
 `automl_flaml_comparison.ipynb` runs [FLAML](https://github.com/microsoft/FLAML) on the same training
-years, class weights, tuning metric and 2021 hold-out. AutoML picks the model family (LightGBM,
+years, class weights, tuning objective (GIBA) and 2021 hold-out. AutoML picks the model family (LightGBM,
 XGBoost, random forest, extra trees) and hyperparameters within a time budget, selecting by stratified
 5-fold CV. It runs on the notebook's driver, so it is **single-node, not distributed**. Databricks'
 built-in AutoML for classification is not used because it needs a classic ML-runtime cluster, which
@@ -142,55 +149,58 @@ Free Edition does not offer.
 
 ## Results on the 2021 hold-out test set
 
-Three approaches, same 28,163 test households, same class weights (`n_neg / n_pos`), same 0.5
-probability threshold. Every metric below is recomputed from each model's confusion matrix with
-identical formulas (`figures/make_comparison_figure.py`).
+Three approaches, same 28,163 test households, same class weights (`n_neg / n_pos`), same tuning
+objective (GIBA), same 0.5 probability threshold. Every metric below is recomputed from each model's
+confusion matrix with identical formulas (`figures/make_comparison_figure.py`).
 
 ![Hold-out comparison of the published model, the Spark baseline and AutoML](figures/holdout_comparison.png)
 
-| Hazard | Model | AUC | Sensitivity | Specificity | G-Mean | MCC | Precision | Missed (FN) | False alarms (FP) |
-|---|---|---|---|---|---|---|---|---|---|
-| Floods | Published XGBoost, Bayesian search | not reported | **0.747** | 0.826 | **0.786** | 0.125 | 0.030 | **50** | 4,858 |
-| Floods | Spark MLlib GBT, grid search | 0.815 | 0.672 | 0.831 | 0.747 | 0.111 | 0.027 | 65 | 4,720 |
-| Floods | FLAML AutoML (XGBoost selected) | **0.894** | 0.652 | **0.922** | 0.775 | **0.175** | **0.056** | 69 | **2,170** |
-| Landslides | Published XGBoost, Bayesian search | not reported | 0.765 | 0.864 | **0.813** | **0.384** | 0.251 | 372 | 3,613 |
-| Landslides | Spark MLlib GBT, grid search | 0.873 | **0.871** | 0.733 | 0.799 | 0.303 | 0.163 | **204** | 7,093 |
-| Landslides | FLAML AutoML (XGBoost selected) | **0.907** | 0.655 | **0.903** | 0.769 | **0.384** | **0.286** | 545 | **2,585** |
+| Hazard | Model | GIBA | Sensitivity | Specificity | G-Mean | MCC | Precision | AUC | Missed (FN) | False alarms (FP) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Floods | Published XGBoost, Bayesian search | 0.618 | 0.747 | 0.826 | 0.786 | 0.125 | 0.030 | not reported | 50 | 4,858 |
+| Floods | Spark MLlib GBT, grid search | 0.558 | 0.672 | **0.831** | 0.747 | 0.111 | 0.027 | 0.815 | 65 | **4,720** |
+| Floods | FLAML AutoML (XGBoost selected) | **0.637** | **0.773** | 0.824 | **0.798** | **0.130** | **0.030** | **0.887** | **45** | 4,925 |
+| Landslides | Published XGBoost, Bayesian search | **0.661** | 0.765 | **0.864** | **0.813** | **0.384** | **0.251** | not reported | 372 | **3,613** |
+| Landslides | Spark MLlib GBT, grid search | 0.639 | **0.871** | 0.733 | 0.799 | 0.303 | 0.163 | 0.873 | **204** | 7,093 |
+| Landslides | FLAML AutoML (LightGBM selected) | 0.660 | 0.773 | 0.853 | 0.812 | 0.374 | 0.239 | **0.912** | 359 | 3,901 |
 
 **How each model was tuned**
 
 | | Published | Spark baseline | AutoML |
 |---|---|---|---|
-| Model | XGBoost | MLlib `GBTClassifier` | chosen by FLAML (XGBoost won both hazards) |
-| Search | Bayesian optimization, 50 iterations | grid, 4 combinations | 12-13 configurations in a 300 s budget |
-| Validation | stratified k-fold CV | one random 80/20 split | stratified 5-fold CV |
-| Objective | GIBA (α = 0.9), favours sensitivity | ROC-AUC | ROC-AUC |
+| Objective | GIBA | GIBA | GIBA |
+| Model | XGBoost | MLlib `GBTClassifier` | chosen by FLAML (XGBoost for floods, LightGBM for landslides) |
+| Search | Bayesian optimization, 50 iterations | grid, 4 combinations | 11-12 configurations in a 300 s budget |
+| Validation | stratified 10-fold CV | one random 80/20 split | stratified 5-fold CV |
 | Compute | single node | Databricks serverless (Spark) | Databricks serverless, driver only |
 
 **What the comparison shows**
 
-- **AutoML ranks households best.** It has the highest AUC for both hazards (0.894 and 0.907) and
-  the fewest false alarms: less than half of either other model's for floods, and 28% fewer than the
-  published model's for landslides.
-- **But it misses more affected households at the 0.5 threshold.** Its sensitivity is the lowest
-  of the three (0.65 for both hazards). In this problem a missed household is unmet demand for aid,
-  so the higher AUC does not by itself make it the better operational model.
-- **The published model is the most balanced.** It was tuned on GIBA, which rewards sensitivity, and
-  it has the best G-Mean for both hazards and the fewest missed flood households.
-- **The Spark baseline is the weakest ranker,** as expected from a 4-combination grid whose best
-  setting sits at the edge of the grid (`maxDepth = 4`, `maxIter = 60` for both hazards). For
-  landslides it reaches the highest sensitivity only by flagging 27% of all non-affected households.
-- **The differences are mostly about the operating point.** The three models sit at different
-  sensitivity/specificity trade-offs; choosing the threshold on validation data (or tuning AutoML on
-  GIBA, as the paper did) would be needed for a like-for-like operational comparison.
+- **With the same objective, AutoML reproduces the published model.** On GIBA it is slightly ahead
+  for floods (0.637 vs 0.618) and level for landslides (0.660 vs 0.661). The flood gap is 5 more
+  affected households found out of 198, at the cost of 67 more false alarms — within noise for a
+  single run.
+- **The two land on almost the same operating point.** Sensitivity is 0.75–0.77 and specificity
+  0.82–0.86 for both, for both hazards. An earlier AutoML run tuned on ROC-AUC instead had picked a
+  much more conservative point (sensitivity 0.65), which shows the objective, not the tool, drives
+  where the model sits.
+- **The Spark baseline is behind on GIBA for both hazards** (0.558 and 0.639), as expected from a
+  4-combination grid whose best setting sits at the edge of the grid (`maxDepth = 4`,
+  `maxIter = 60` for both hazards). For landslides it reaches the highest sensitivity only by
+  flagging 27% of all non-affected households.
+- **AutoML ranks households better than the Spark baseline** (AUC 0.887 vs 0.815 for floods, 0.912
+  vs 0.873 for landslides). The published study does not report AUC.
 
 **Caveats**
 
 - The published confusion matrices are read from Figure 14 of the PUC-Rio thesis version of the
   study, which match the published article. Its hold-out set has the same size and number of
   positives as this repo's test files.
-- GIBA is omitted from the table: the value printed in the study could not be reproduced from its
-  confusion matrix with this repo's formula, so the two are not comparable.
+- GIBA here is sensitivity × specificity, as the study's code computes it (see above). From the
+  published confusion matrices this gives 0.618 for floods and 0.661 for landslides; the study prints
+  62.0 and 67.0.
+- The objective is the same, but search effort and validation scheme still differ between the three
+  (see the tuning table), so this is not a controlled comparison of model families.
 - One run per model, no confidence intervals. With 198 flood positives, a difference of a few
   households is noise.
 
@@ -207,15 +217,15 @@ constraints it surfaces, not a scale-out speedup.
    Alternatively, upload the CSVs to a Workspace folder and let the notebook's first code cell create
    the Volume and copy them in — edit `SRC` in that cell to your own folder.
 3. **Set `CATALOG` / `SCHEMA` / `VOLUME`** in the notebook's cell 0 (defaults: `workspace` / `default` /
-   `thesis_data`). Pick floods or landslides with `LABEL`.
+   `thesis_data`). The notebook runs both hazards.
 4. **Run top to bottom** on Serverless.
 
 ### Serverless notes (baked into the notebook)
 - **Scratch path:** MLlib needs `SPARKML_TEMP_DFS_PATH` set to a Volume folder — cell 1 does this.
 - **Column names:** region dummies with spaces are sanitized (Delta forbids `` ,;{}()\n\t=``).
-- **Model-cache limit:** Spark Connect caps the per-session model cache at 1 GB, so the notebook uses
-  `TrainValidationSplit` (fewer models than k-fold CV). If you hit `ML_CACHE_SIZE_OVERFLOW`, run
-  `dbutils.library.restartPython()` and re-run cells 1 → 3 → 4.
+- **Model-cache limit:** Spark Connect caps the per-session model cache at 1 GB, so the notebook scores
+  candidates on one validation split and releases each model before the next. If you hit `ML_CACHE_SIZE_OVERFLOW`, run
+  `dbutils.library.restartPython()` and re-run from section 1.
 
 ## Requirements
 
